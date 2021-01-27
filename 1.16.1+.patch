@@ -1,130 +1,150 @@
 diff --git a/src/core/ngx_core.h b/src/core/ngx_core.h
-index 93ca9174..4ac3cfdc 100644
+index 93ca9174..3a31b6f5 100644
 --- a/src/core/ngx_core.h
 +++ b/src/core/ngx_core.h
-@@ -40,6 +40,9 @@ typedef void (*ngx_connection_handler_pt)(ngx_connection_t *c);
+@@ -40,6 +40,7 @@ typedef void (*ngx_connection_handler_pt)(ngx_connection_t *c);
  #define  NGX_DONE       -4
  #define  NGX_DECLINED   -5
  #define  NGX_ABORT      -6
-+#if (T_NGX_HTTP_DYNAMIC_RESOLVE)
 +#define  NGX_YIELD      -7
-+#endif
  
  
  #include <ngx_errno.h>
 diff --git a/src/event/ngx_event_connect.h b/src/event/ngx_event_connect.h
-index d3b23782..e307a909 100644
+index d3b23782..b1d41384 100644
 --- a/src/event/ngx_event_connect.h
 +++ b/src/event/ngx_event_connect.h
-@@ -39,6 +39,9 @@ struct ngx_peer_connection_s {
+@@ -39,6 +39,7 @@ struct ngx_peer_connection_s {
      struct sockaddr                 *sockaddr;
      socklen_t                        socklen;
      ngx_str_t                       *name;
-+#if (T_NGX_HTTP_DYNAMIC_RESOLVE)
 +    ngx_str_t                       *host;
-+#endif
  
      ngx_uint_t                       tries;
      ngx_msec_t                       start_time;
-@@ -65,6 +68,10 @@ struct ngx_peer_connection_s {
+@@ -65,6 +66,8 @@ struct ngx_peer_connection_s {
      unsigned                         so_keepalive:1;
      unsigned                         down:1;
  
-+#if (T_NGX_HTTP_DYNAMIC_RESOLVE)
 +    unsigned                         resolved:2;
-+#endif
 +
                                       /* ngx_connection_log_error_e */
      unsigned                         log_error:2;
  
 diff --git a/src/http/modules/ngx_http_upstream_ip_hash_module.c b/src/http/modules/ngx_http_upstream_ip_hash_module.c
-index 1fa01d95..519d57fa 100644
+index 1fa01d95..58095c2d 100644
 --- a/src/http/modules/ngx_http_upstream_ip_hash_module.c
 +++ b/src/http/modules/ngx_http_upstream_ip_hash_module.c
-@@ -236,6 +236,9 @@ ngx_http_upstream_get_ip_hash_peer(ngx_peer_connection_t *pc, void *data)
+@@ -236,6 +236,7 @@ ngx_http_upstream_get_ip_hash_peer(ngx_peer_connection_t *pc, void *data)
      pc->sockaddr = peer->sockaddr;
      pc->socklen = peer->socklen;
      pc->name = &peer->name;
-+#if (T_NGX_HTTP_DYNAMIC_RESOLVE)
 +    pc->host = &peer->host;
-+#endif
  
      peer->conns++;
  
 diff --git a/src/http/modules/ngx_http_upstream_least_conn_module.c b/src/http/modules/ngx_http_upstream_least_conn_module.c
-index ebe06276..33090f99 100644
+index ebe06276..7edfad0b 100644
 --- a/src/http/modules/ngx_http_upstream_least_conn_module.c
 +++ b/src/http/modules/ngx_http_upstream_least_conn_module.c
-@@ -240,6 +240,9 @@ ngx_http_upstream_get_least_conn_peer(ngx_peer_connection_t *pc, void *data)
+@@ -240,6 +240,7 @@ ngx_http_upstream_get_least_conn_peer(ngx_peer_connection_t *pc, void *data)
      pc->sockaddr = best->sockaddr;
      pc->socklen = best->socklen;
      pc->name = &best->name;
-+#if (T_NGX_HTTP_DYNAMIC_RESOLVE)
 +    pc->host = &best->host;
-+#endif
  
      best->conns++;
  
+diff --git a/src/http/ngx_http_upstream.c b/src/http/ngx_http_upstream.c
+index a7391d09..b417d7d3 100644
+--- a/src/http/ngx_http_upstream.c
++++ b/src/http/ngx_http_upstream.c
+@@ -35,7 +35,7 @@ static void ngx_http_upstream_rd_check_broken_connection(ngx_http_request_t *r);
+ static void ngx_http_upstream_wr_check_broken_connection(ngx_http_request_t *r);
+ static void ngx_http_upstream_check_broken_connection(ngx_http_request_t *r,
+     ngx_event_t *ev);
+-static void ngx_http_upstream_connect(ngx_http_request_t *r,
++void ngx_http_upstream_connect(ngx_http_request_t *r,
+     ngx_http_upstream_t *u);
+ static ngx_int_t ngx_http_upstream_reinit(ngx_http_request_t *r,
+     ngx_http_upstream_t *u);
+@@ -99,7 +99,7 @@ static void ngx_http_upstream_dummy_handler(ngx_http_request_t *r,
+ static void ngx_http_upstream_next(ngx_http_request_t *r,
+     ngx_http_upstream_t *u, ngx_uint_t ft_type);
+ static void ngx_http_upstream_cleanup(void *data);
+-static void ngx_http_upstream_finalize_request(ngx_http_request_t *r,
++void ngx_http_upstream_finalize_request(ngx_http_request_t *r,
+     ngx_http_upstream_t *u, ngx_int_t rc);
+ 
+ static ngx_int_t ngx_http_upstream_process_header_line(ngx_http_request_t *r,
+@@ -1501,7 +1501,7 @@ ngx_http_upstream_check_broken_connection(ngx_http_request_t *r,
+ }
+ 
+ 
+-static void
++void
+ ngx_http_upstream_connect(ngx_http_request_t *r, ngx_http_upstream_t *u)
+ {
+     ngx_int_t          rc;
+@@ -4296,7 +4296,7 @@ ngx_http_upstream_cleanup(void *data)
+ }
+ 
+ 
+-static void
++void
+ ngx_http_upstream_finalize_request(ngx_http_request_t *r,
+     ngx_http_upstream_t *u, ngx_int_t rc)
+ {
 diff --git a/src/http/ngx_http_upstream.h b/src/http/ngx_http_upstream.h
-index 6079d723..86380632 100644
+index 6079d723..7da05b62 100644
 --- a/src/http/ngx_http_upstream.h
 +++ b/src/http/ngx_http_upstream.h
-@@ -102,6 +102,10 @@ typedef struct {
+@@ -102,6 +102,8 @@ typedef struct {
      ngx_msec_t                       slow_start;
      ngx_uint_t                       down;
  
-+#if (T_NGX_HTTP_DYNAMIC_RESOLVE)
 +    ngx_str_t                        host;
-+#endif
 +
      unsigned                         backup:1;
  
      NGX_COMPAT_BEGIN(6)
-@@ -338,6 +342,9 @@ struct ngx_http_upstream_s {
+@@ -338,6 +340,7 @@ struct ngx_http_upstream_s {
      ngx_http_upstream_headers_in_t   headers_in;
  
      ngx_http_upstream_resolved_t    *resolved;
-+#if (T_NGX_HTTP_DYNAMIC_RESOLVE)
 +    ngx_resolver_ctx_t              *dyn_resolve_ctx;
-+#endif
  
      ngx_buf_t                        from_client;
  
 diff --git a/src/http/ngx_http_upstream_round_robin.c b/src/http/ngx_http_upstream_round_robin.c
-index f72de3ee..9b1b6721 100644
+index f72de3ee..4c751c28 100644
 --- a/src/http/ngx_http_upstream_round_robin.c
 +++ b/src/http/ngx_http_upstream_round_robin.c
-@@ -97,6 +97,9 @@ ngx_http_upstream_init_round_robin(ngx_conf_t *cf,
+@@ -97,6 +97,7 @@ ngx_http_upstream_init_round_robin(ngx_conf_t *cf,
                  peer[n].fail_timeout = server[i].fail_timeout;
                  peer[n].down = server[i].down;
                  peer[n].server = server[i].name;
-+#if (T_NGX_HTTP_DYNAMIC_RESOLVE)
 +                peer[n].host = server[i].host;
-+#endif
  
                  *peerp = &peer[n];
                  peerp = &peer[n].next;
-@@ -160,6 +163,9 @@ ngx_http_upstream_init_round_robin(ngx_conf_t *cf,
+@@ -160,6 +161,7 @@ ngx_http_upstream_init_round_robin(ngx_conf_t *cf,
                  peer[n].max_fails = server[i].max_fails;
                  peer[n].fail_timeout = server[i].fail_timeout;
                  peer[n].down = server[i].down;
-+#if (T_NGX_HTTP_DYNAMIC_RESOLVE)
 +                peer[n].host = server[i].host;
-+#endif
                  peer[n].server = server[i].name;
  
                  *peerp = &peer[n];
 diff --git a/src/http/ngx_http_upstream_round_robin.h b/src/http/ngx_http_upstream_round_robin.h
-index 45f258d2..17503dc4 100644
+index 45f258d2..dbcda750 100644
 --- a/src/http/ngx_http_upstream_round_robin.h
 +++ b/src/http/ngx_http_upstream_round_robin.h
-@@ -22,6 +22,10 @@ struct ngx_http_upstream_rr_peer_s {
+@@ -22,6 +22,8 @@ struct ngx_http_upstream_rr_peer_s {
      ngx_str_t                       name;
      ngx_str_t                       server;
  
-+#if (T_NGX_HTTP_DYNAMIC_RESOLVE)
 +    ngx_str_t                       host;
-+#endif
 +
      ngx_int_t                       current_weight;
      ngx_int_t                       effective_weight;
